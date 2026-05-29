@@ -117,7 +117,7 @@ class Finding:
             self.rule_id = self._derive_rule_id()
 
     def _derive_rule_id(self) -> str:
-        digest = hashlib.sha1(f"{self.category}:{self.title}".lower().encode("utf-8")).hexdigest()[:8]
+        digest = hashlib.sha256(f"{self.category}:{self.title}".lower().encode("utf-8")).hexdigest()[:8]
         slug = re.sub(r"[^a-z0-9]+", "-", self.category.lower()).strip("-") or "general"
         return f"codequal/{slug}/{digest}"
 

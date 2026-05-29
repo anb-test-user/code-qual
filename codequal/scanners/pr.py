@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Set
 
 from ..engine import Engine
-from ..languages import is_supported, language_for
+from ..languages import is_supported, language_for, matches_any
 from ..models import AnalysisUnit, ScanResult
 
 _HUNK_RE = re.compile(r"^@@ .*\+(\d+)(?:,(\d+))? @@")
@@ -79,6 +79,8 @@ def scan_pr(
     head: str = "",
     engine: Optional[Engine] = None,
     max_bytes: int = 200_000,
+    include: Optional[List[str]] = None,
+    exclude: Optional[List[str]] = None,
 ) -> ScanResult:
     """Scan only the regions changed between ``base`` and ``head`` (or working tree)."""
     engine = engine or Engine()
@@ -103,6 +105,10 @@ def scan_pr(
 
     for rel, lines in changed.items():
         if not is_supported(rel):
+            continue
+        if include and not matches_any(rel, include):
+            continue
+        if exclude and matches_any(rel, exclude):
             continue
         file_path = root_path / rel
         if not file_path.is_file():

@@ -66,6 +66,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_pr.add_argument("path", nargs="?", default=".", help="repository root")
     p_pr.add_argument("--base", default="origin/main", help="base ref to diff against")
     p_pr.add_argument("--head", default="", help="head ref (default: working tree)")
+    p_pr.add_argument("--include", action="append", default=None, metavar="GLOB")
+    p_pr.add_argument("--exclude", action="append", default=None, metavar="GLOB")
 
     p_file = sub.add_parser("file", parents=[engine_opts, output_opts], help="scan a single file")
     p_file.add_argument("path", nargs="?", default=None)
@@ -202,7 +204,15 @@ def main(argv: Optional[List[str]] = None) -> int:
             max_files=args.max_files,
         )
     elif command == "pr":
-        result = scan_pr(args.path, base=args.base, head=args.head, engine=engine, max_bytes=cfg.max_bytes)
+        result = scan_pr(
+            args.path,
+            base=args.base,
+            head=args.head,
+            engine=engine,
+            max_bytes=cfg.max_bytes,
+            include=args.include if args.include is not None else (cfg.include or None),
+            exclude=args.exclude if args.exclude is not None else (cfg.exclude or None),
+        )
     elif command == "file":
         if args.stdin or args.path is None:
             from .scanners import scan_content

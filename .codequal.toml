@@ -15,8 +15,10 @@ max_workers = 8
 # Drop findings below this confidence (0.0 keeps everything).
 min_confidence = 0.0
 
-# Glob patterns to skip during repo scans (in addition to .gitignore).
-exclude = ["**/vendor/**", "**/*.min.js", "**/__snapshots__/**"]
+# Glob patterns to skip during repo and PR scans (in addition to .gitignore).
+# examples/ and tests/ hold intentionally-flawed fixtures used to exercise the
+# scanner itself, so they are excluded from the quality gate.
+exclude = ["examples/**", "tests/**", "**/vendor/**", "**/*.min.js", "**/__snapshots__/**"]
 
 # Only scan files matching these globs (empty = all supported source files).
 include = []

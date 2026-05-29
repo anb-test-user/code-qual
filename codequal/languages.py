@@ -60,7 +60,7 @@ def is_supported(path: os.PathLike | str) -> bool:
     return language_for(path) is not None
 
 
-def _matches_any(rel_path: str, patterns: Iterable[str]) -> bool:
+def matches_any(rel_path: str, patterns: Iterable[str]) -> bool:
     norm = rel_path.replace(os.sep, "/")
     base = os.path.basename(norm)
     return any(fnmatch.fnmatch(norm, pat) or fnmatch.fnmatch(base, pat) for pat in patterns)
@@ -117,9 +117,9 @@ def iter_source_files(
             rel = str(path.relative_to(root_path))
         except ValueError:
             rel = str(path)
-        if include and not _matches_any(rel, include):
+        if include and not matches_any(rel, include):
             continue
-        if exclude and _matches_any(rel, exclude):
+        if exclude and matches_any(rel, exclude):
             continue
         try:
             if path.stat().st_size > max_bytes:
