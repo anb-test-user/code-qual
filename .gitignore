@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# CodeQual output artifacts
+*.sarif
+codequal-report.*
+
+# Node / VS Code extension
+node_modules/
+ide/vscode/out/
+ide/vscode/*.vsix
+*.tsbuildinfo
+
+# Editor / OS
+.idea/
+.DS_Store
+*.swp

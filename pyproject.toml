@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "codequal"
+version = "0.1.0"
+description = "AI-native code quality scanner: repo scanning, PR scanning, and an IDE plugin."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "CodeQual" }]
+keywords = ["code-quality", "static-analysis", "ai", "claude", "code-review", "sarif", "linter"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Software Development :: Quality Assurance",
+]
+dependencies = []
+
+[project.optional-dependencies]
+ai = ["anthropic>=0.40"]
+dev = ["pytest>=7", "anthropic>=0.40"]
+
+[project.scripts]
+codequal = "codequal.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/anb-test-user/code-qual"
+Repository = "https://github.com/anb-test-user/code-qual"
+
+[tool.setuptools]
+packages = ["codequal", "codequal.scanners"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
