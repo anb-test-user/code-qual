@@ -1,0 +1,73 @@
+{
+  "name": "codequal-vscode",
+  "displayName": "CodeQual",
+  "description": "AI-native code quality scanner — inline findings from the CodeQual engine.",
+  "version": "0.1.0",
+  "publisher": "codequal",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": ["Linters", "Programming Languages", "Other"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./out/extension.js",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/anb-test-user/code-qual"
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "codequal.scanFile",
+        "title": "CodeQual: Scan Current File"
+      },
+      {
+        "command": "codequal.scanWorkspace",
+        "title": "CodeQual: Scan Workspace"
+      },
+      {
+        "command": "codequal.clear",
+        "title": "CodeQual: Clear Findings"
+      }
+    ],
+    "configuration": {
+      "title": "CodeQual",
+      "properties": {
+        "codequal.path": {
+          "type": "string",
+          "default": "codequal",
+          "description": "Path to the codequal CLI executable (installed via `pip install codequal`)."
+        },
+        "codequal.useAI": {
+          "type": "boolean",
+          "default": true,
+          "description": "Use the Claude-powered engine when ANTHROPIC_API_KEY is set. Disable to force offline heuristics."
+        },
+        "codequal.model": {
+          "type": "string",
+          "default": "",
+          "description": "Override the Claude model id (empty = CodeQual default)."
+        },
+        "codequal.minConfidence": {
+          "type": "number",
+          "default": 0,
+          "description": "Drop findings below this confidence (0..1)."
+        },
+        "codequal.scanOnSave": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically scan a file when it is saved."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "^18.19.0",
+    "@types/vscode": "^1.75.0",
+    "typescript": "^5.4.0"
+  }
+}

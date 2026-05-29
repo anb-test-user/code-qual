@@ -1,0 +1,71 @@
+name: CodeQual
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write   # upload SARIF to code scanning
+  pull-requests: write     # post the summary comment
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install CodeQual
+        run: pip install -e ".[ai]"
+
+      - name: Scan
+        env:
+          # Optional: set this repo secret to enable the Claude-powered engine.
+          # Without it, CodeQual runs in offline heuristic mode.
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git fetch --no-tags origin "${{ github.base_ref }}"
+            codequal pr --base "origin/${{ github.base_ref }}" -f json -o codequal.json --fail-on none -q
+          else
+            codequal repo . -f json -o codequal.json --fail-on none -q
+          fi
+          # Re-render the single scan into the artifacts we need (no second scan).
+          codequal render codequal.json -f sarif    -o codequal.sarif --fail-on none -q
+          codequal render codequal.json -f markdown -o codequal.md    --fail-on none -q
+
+      - name: Upload SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: codequal.sarif
+
+      - name: Comment report on PR
+        if: ${{ github.event_name == 'pull_request' && always() }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let body;
+            try { body = fs.readFileSync('codequal.md', 'utf8'); } catch (e) { return; }
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+            const { data: comments } = await github.rest.issues.listComments({ owner, repo, issue_number });
+            const existing = comments.find(c => c.body && c.body.includes('CodeQual report'));
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }
+
+      - name: Quality gate (fail on high+ findings)
+        run: codequal render codequal.json --fail-on high -f json -o /dev/null -q
