@@ -55,6 +55,16 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 
+# ---------------------------------------------------------------------------
+# FILL THESE IN to run the script as-is (create them in Aikido under
+# Settings → Integrations → API). Leave empty to use the AIKIDO_* environment
+# variables or CLI flags instead, which take precedence over these values.
+# Do NOT commit real credentials.
+# ---------------------------------------------------------------------------
+AIKIDO_CLIENT_ID = ""
+AIKIDO_CLIENT_SECRET = ""
+AIKIDO_API_TOKEN = ""  # alternative: a ready-made bearer token
+
 DEFAULT_BASE_URL = "https://app.aikido.dev"
 TOKEN_PATH = "/api/oauth/token"
 API_PREFIX = "/api/public/v1"
@@ -283,9 +293,10 @@ class AikidoClient:
             return
         if not (self.client_id and self.client_secret):
             raise SystemExit(
-                "No Aikido credentials. Set AIKIDO_CLIENT_ID + AIKIDO_CLIENT_SECRET "
-                "(create them in Aikido under Settings → Integrations → API), or set "
-                "AIKIDO_API_TOKEN with an existing bearer token."
+                "No Aikido credentials. Fill in AIKIDO_CLIENT_ID + AIKIDO_CLIENT_SECRET "
+                "at the top of this script, or set them as environment variables "
+                "(create them in Aikido under Settings → Integrations → API). "
+                "Alternatively provide an existing bearer token via AIKIDO_API_TOKEN."
             )
         self._log("Authenticating (OAuth2 client credentials)…")
         response = self._request(
@@ -634,9 +645,12 @@ def main(argv=None):
                         help="output path (default: Aikido_Security_Report_<date>.<ext>)")
     parser.add_argument("--base-url", default=os.environ.get("AIKIDO_BASE_URL", DEFAULT_BASE_URL),
                         help=f"Aikido base URL (default: {DEFAULT_BASE_URL})")
-    parser.add_argument("--client-id", default=os.environ.get("AIKIDO_CLIENT_ID"))
-    parser.add_argument("--client-secret", default=os.environ.get("AIKIDO_CLIENT_SECRET"))
-    parser.add_argument("--token", default=os.environ.get("AIKIDO_API_TOKEN"),
+    parser.add_argument("--client-id",
+                        default=os.environ.get("AIKIDO_CLIENT_ID") or AIKIDO_CLIENT_ID)
+    parser.add_argument("--client-secret",
+                        default=os.environ.get("AIKIDO_CLIENT_SECRET") or AIKIDO_CLIENT_SECRET)
+    parser.add_argument("--token",
+                        default=os.environ.get("AIKIDO_API_TOKEN") or AIKIDO_API_TOKEN,
                         help="ready-made bearer token (skips the OAuth exchange)")
     parser.add_argument("--max-workers", type=int, default=5,
                         help="concurrent group-detail requests (default: 5)")
