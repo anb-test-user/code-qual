@@ -8,9 +8,14 @@
 # ///
 """Aikido Security Report Builder.
 
-Pulls open issues from the Aikido public API — including the remediation /
+Pulls issues from the Aikido public API — including the remediation /
 fix suggestion that the platform shows but the default exported report omits —
 and renders them into a polished PDF (or HTML / CSV) report.
+
+Only OPEN issues are included by default; non-open issues (ignored, snoozed,
+closed/resolved) are excluded both by the API-side status filter and by a
+client-side check on each issue's own status field. Pass ``--status all`` to
+include everything.
 
 Data flow
 ---------
@@ -210,6 +215,25 @@ def group_to_row(group, member_count=None):
     }
 
 
+def filter_issues_by_status(issues, status):
+    """Client-side safety net for the status filter.
+
+    The export endpoint is asked for the requested status via
+    ``filter_status``, but if the API were to ignore an unrecognized filter
+    parameter, non-matching issues would silently flow into the report.
+    Issues that carry a status field that doesn't match are dropped here;
+    issues without a recognizable status field are kept.
+    """
+    if not status or status == "all":
+        return issues
+    kept = []
+    for issue in issues:
+        own = str(pick(issue, "status", "state", default="")).strip().lower()
+        if not own or own == status:
+            kept.append(issue)
+    return kept
+
+
 def group_issues_by_group_id(issues):
     """Bucket exported issues by their group id; returns {group_id: [issue, ...]}."""
     buckets = {}
@@ -310,20 +334,22 @@ class AikidoClient:
         if not self.token:
             raise SystemExit(f"Token endpoint returned no access_token: {payload}")
 
-    def _get(self, path, **params):
+    def _get(self, path, timeout=None, **params):
         return self._request(
             "GET",
             f"{self.base_url}{API_PREFIX}{path}",
             headers={"Authorization": f"Bearer {self.token}",
                      "Accept": "application/json"},
             params={k: v for k, v in params.items() if v is not None},
+            timeout=timeout or self.timeout,
         )
 
     def export_issues(self, status="open"):
         params = {"format": "json"}
         if status and status != "all":
             params["filter_status"] = status
-        payload = self._get("/issues/export", **params).json()
+        # the export can be large on big workspaces — give it extra time
+        payload = self._get("/issues/export", timeout=120, **params).json()
         if isinstance(payload, list):
             return payload
         if isinstance(payload, dict):
@@ -347,6 +373,11 @@ def fetch_rows(client, status="open", max_workers=5, dump=None):
     client.authenticate()
     print(f"Exporting issues (status={status})…", file=sys.stderr)
     issues = client.export_issues(status)
+    matching = filter_issues_by_status(issues, status)
+    if len(matching) != len(issues):
+        print(f"  dropped {len(issues) - len(matching)} issues whose status "
+              f"is not '{status}'", file=sys.stderr)
+    issues = matching
     buckets = group_issues_by_group_id(issues)
     print(f"Fetched {len(issues)} issues in {len(buckets)} issue groups; "
           f"fetching group details…", file=sys.stderr)
@@ -409,7 +440,12 @@ def render_csv(rows, path):
                              r["title"], r["description"], r["remediation"]])
 
 
-def render_html(rows, stats, path, generated, status):
+DEFAULT_TITLE = "Security Vulnerability Report"
+DEFAULT_SUBTITLE = "Enterprise Security Assessment — Aikido Platform"
+
+
+def render_html(rows, stats, path, generated, status,
+                title=DEFAULT_TITLE, subtitle=DEFAULT_SUBTITLE):
     e = html_mod.escape
     max_count = max((stats["by_severity"][s] for s in SEVERITIES), default=0) or 1
     bars = "".join(
@@ -433,7 +469,7 @@ def render_html(rows, stats, path, generated, status):
     doc = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Security Vulnerability Report</title>
+<title>{e(title)}</title>
 <style>
   body {{ font-family: system-ui, -apple-system, "Segoe UI", sans-serif; color: {INK};
          margin: 2rem auto; max-width: 70rem; padding: 0 1rem; }}
@@ -452,8 +488,8 @@ def render_html(rows, stats, path, generated, status):
   .sev {{ font-weight: 700; }} .num {{ text-align: right; font-variant-numeric: tabular-nums; }}
   footer {{ margin-top: 1.5rem; color: {INK_MUTED}; font-size: .8rem; }}
 </style></head><body>
-<h1>Security Vulnerability Report</h1>
-<p class="subtitle">Enterprise Security Assessment — Aikido Platform</p>
+<h1>{e(title)}</h1>
+<p class="subtitle">{e(subtitle)}</p>
 <p class="generated">Generated: {e(generated)}</p>
 <hr>
 <h2>Executive Summary</h2>
@@ -593,7 +629,8 @@ def _page_footer(margin, page_width):
     return footer
 
 
-def render_pdf(rows, stats, path, generated, status):
+def render_pdf(rows, stats, path, generated, status,
+               title=DEFAULT_TITLE, subtitle=DEFAULT_SUBTITLE):
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4
     from reportlab.platypus import (HRFlowable, Paragraph, SimpleDocTemplate,
@@ -604,9 +641,9 @@ def render_pdf(rows, stats, path, generated, status):
     styles = _pdf_styles()
 
     story = [
-        Paragraph("Security Vulnerability Report", styles["title"]),
+        Paragraph(html_mod.escape(title), styles["title"]),
         Spacer(1, 4),
-        Paragraph("Enterprise Security Assessment — Aikido Platform", styles["subtitle"]),
+        Paragraph(html_mod.escape(subtitle), styles["subtitle"]),
         Spacer(1, 2),
         Paragraph(f"Generated: {generated}", styles["generated"]),
         Spacer(1, 8),
@@ -625,7 +662,7 @@ def render_pdf(rows, stats, path, generated, status):
     doc = SimpleDocTemplate(
         str(path), pagesize=A4,
         leftMargin=margin, rightMargin=margin, topMargin=margin + 6, bottomMargin=margin + 14,
-        title="Security Vulnerability Report", author="Aikido Report Builder",
+        title=title, author="Aikido Report Builder",
     )
     doc.build(story, onFirstPage=footer, onLaterPages=footer)
 
@@ -638,8 +675,11 @@ def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Build a security report (with remediation column) from the Aikido API.")
     parser.add_argument("--status", default="open",
-                        help="issue status filter passed to the export endpoint "
-                             "(default: open; use 'all' for no filter)")
+                        help="issue status filter (default: open — non-open issues "
+                             "such as ignored/snoozed/closed are excluded; "
+                             "use 'all' to include everything)")
+    parser.add_argument("--title", default=DEFAULT_TITLE, help="report title")
+    parser.add_argument("--subtitle", default=DEFAULT_SUBTITLE, help="report subtitle")
     parser.add_argument("-f", "--format", choices=["pdf", "html", "csv"], default="pdf")
     parser.add_argument("-o", "--output", default=None,
                         help="output path (default: Aikido_Security_Report_<date>.<ext>)")
@@ -689,9 +729,11 @@ def main(argv=None):
     if args.format == "csv":
         render_csv(rows, output)
     elif args.format == "html":
-        render_html(rows, stats, output, generated, args.status)
+        render_html(rows, stats, output, generated, args.status,
+                    title=args.title, subtitle=args.subtitle)
     else:
-        render_pdf(rows, stats, output, generated, args.status)
+        render_pdf(rows, stats, output, generated, args.status,
+                   title=args.title, subtitle=args.subtitle)
 
     b = stats["by_severity"]
     print(f"Wrote {output} — {stats['groups']} issue groups / {stats['issues']} issues "

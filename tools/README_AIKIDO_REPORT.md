@@ -49,15 +49,21 @@ findings table with these columns:
 python3 tools/aikido_report.py                      # open issues → Aikido_Security_Report_<date>.pdf
 python3 tools/aikido_report.py -f csv -o issues.csv # same data as CSV
 python3 tools/aikido_report.py -f html -o report.html
-python3 tools/aikido_report.py --status all         # include non-open issues
 python3 tools/aikido_report.py --demo               # offline sample data, no API needed
 ```
 
+**Only open issues are included by default.** Non-open issues (ignored,
+snoozed, closed/resolved) are excluded twice over: the export request asks the
+API for open issues only (`filter_status=open`), and a client-side check drops
+any returned issue whose own status field says otherwise. Pass `--status all`
+only if you explicitly want everything.
+
 | Flag | Meaning |
 | --- | --- |
-| `--status` | issue status filter for the export endpoint (default `open`; `all` disables the filter) |
+| `--status` | issue status filter (default `open` — non-open issues are excluded; `all` includes everything) |
 | `-f, --format` | `pdf` (default), `html`, `csv` |
 | `-o, --output` | output path |
+| `--title`, `--subtitle` | report heading text (defaults match the reference report) |
 | `--base-url` | Aikido base URL (default `https://app.aikido.dev`; also `AIKIDO_BASE_URL`) |
 | `--max-workers` | concurrent group-detail requests (default 5) |
 | `--demo` | render from `aikido_sample_data.json` instead of the API |

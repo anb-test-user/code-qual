@@ -37,6 +37,19 @@ def test_humanize_type():
     assert ar.humanize_type("some_new_type") == "Some New Type"
 
 
+def test_filter_issues_by_status():
+    issues = [
+        {"id": 1, "status": "open"},
+        {"id": 2, "status": "ignored"},
+        {"id": 3, "status": "snoozed"},
+        {"id": 4},  # no status field -> kept (benefit of the doubt)
+        {"id": 5, "state": "closed"},
+    ]
+    kept = ar.filter_issues_by_status(issues, "open")
+    assert [i["id"] for i in kept] == [1, 4]
+    assert ar.filter_issues_by_status(issues, "all") == issues
+
+
 def test_grouping_and_counts():
     issues = [
         {"id": 1, "group_id": 10},
