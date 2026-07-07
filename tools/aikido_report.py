@@ -185,12 +185,50 @@ def humanize_type(value):
     return TYPE_LABELS.get(raw.lower(), raw.replace("_", " ").title())
 
 
-def group_to_row(group, member_count=None):
+def build_description(group, member_issues, count, type_label):
+    """Produce a description that is never empty (this is a client-facing
+    column): group fields, then member-issue fields, then a factual line
+    synthesized from structured data, then a generic fallback."""
+    desc = pick(group, "description", "summary", "details", "explanation",
+                "issue_description", "short_description", "long_description",
+                "message", "context")
+    if desc:
+        return str(desc)
+    for issue in member_issues or []:
+        desc = pick(issue, "description", "summary", "details", "message")
+        if desc:
+            return str(desc)
+    bits = []
+    package = pick(group, "affected_package", "package_name", "package")
+    if not package and member_issues:
+        package = pick(member_issues[0], "affected_package", "package_name", "package")
+    if package:
+        bits.append(f"Affects {package}")
+    cves = pick(group, "cve_ids", "cves", "cve_id")
+    if cves:
+        bits.append(f"CVEs: {cves}")
+    locations = sorted({
+        str(pick(i, "affected_file", "file", "path", "location", "domain", "target",
+                 default="")).strip()
+        for i in (member_issues or [])
+    } - {""})
+    if locations:
+        shown = ", ".join(locations[:3])
+        more = f" (+{len(locations) - 3} more)" if len(locations) > 3 else ""
+        bits.append(f"Found in {shown}{more}")
+    if bits:
+        return ". ".join(bits) + "."
+    noun = "instance" if count == 1 else "instances"
+    return (f"{count} {noun} of this {type_label} issue detected across the "
+            f"scanned environment; see the Aikido platform for per-instance details.")
+
+
+def group_to_row(group, member_count=None, member_issues=None):
     """Normalize one issue-group payload into a report row.
 
-    ``member_count`` is the number of issues seen for this group in the
-    export; when absent (demo mode, or an issue the export didn't cover) the
-    group's own count fields are used.
+    ``member_count``/``member_issues`` come from grouping the export; when
+    absent (demo mode, or an issue the export didn't cover) the group's own
+    count fields are used.
     """
     count = member_count
     if not count:
@@ -203,21 +241,27 @@ def group_to_row(group, member_count=None):
                 count = int(raw_count)
             except (TypeError, ValueError):
                 count = 1
+    count = max(1, int(count))
     severity = normalize_severity(
         pick(group, "severity", default=None),
         pick(group, "severity_score", "score", default=None),
     )
+    type_label = humanize_type(pick(group, "type", "issue_type", "category"))
+    remediation = str(pick(group, "remediation", "fix", "fix_suggestion",
+                           "recommended_fix", "remediation_suggestion", "solution",
+                           "how_to_fix"))
+    if not remediation:
+        remediation = ("No automated fix suggestion available — review this "
+                       "finding in the Aikido platform.")
     return {
         "group_id": pick(group, "id", "group_id", default=""),
-        "type": humanize_type(pick(group, "type", "issue_type", "category")),
+        "type": type_label,
         "severity": severity,
-        "count": max(1, int(count)),
+        "count": count,
         "title": str(pick(group, "title", "name", "issue_title", "rule",
                           default="(untitled issue group)")),
-        "description": str(pick(group, "description", "summary", "details", "explanation")),
-        "remediation": str(pick(group, "remediation", "fix", "fix_suggestion",
-                                "recommended_fix", "remediation_suggestion", "solution",
-                                "how_to_fix")),
+        "description": build_description(group, member_issues, count, type_label),
+        "remediation": remediation,
     }
 
 
@@ -409,7 +453,8 @@ def fetch_rows(client, status="open", max_workers=5, dump=None):
             # No group details available (ungrouped issue) — build the row
             # from the issue itself so nothing silently disappears.
             group = members[0]
-        rows.append(group_to_row(group, member_count=len(members)))
+        rows.append(group_to_row(group, member_count=len(members),
+                                 member_issues=members))
     return sort_rows(rows)
 
 
@@ -450,6 +495,43 @@ DEFAULT_TITLE = "Security Vulnerability Report"
 DEFAULT_SUBTITLE = "Enterprise Security Assessment — Aikido Platform"
 
 
+_HTML_STYLE = f"""
+  body {{ font-family: system-ui, -apple-system, "Segoe UI", sans-serif; color: {INK};
+         margin: 2rem auto; max-width: 70rem; padding: 0 1rem; }}
+  h1 {{ margin-bottom: .2rem; }} .subtitle {{ color: {INK_SECONDARY}; }}
+  .generated {{ color: {INK_MUTED}; font-size: .85rem; }}
+  hr {{ border: 0; border-top: 1px solid {HAIRLINE}; margin: 1.2rem 0; }}
+  .bar-row {{ display: flex; align-items: center; gap: .6rem; margin: .35rem 0; }}
+  .bar-label {{ width: 5rem; font-weight: 600; font-size: .9rem; }}
+  .bar-track {{ flex: 1; }}
+  .bar {{ display: block; height: 12px; border-radius: 3px; min-width: 3px; }}
+  .bar-count {{ width: 2.5rem; text-align: right; font-variant-numeric: tabular-nums; }}
+  table {{ border-collapse: collapse; width: 100%; font-size: .82rem; margin-top: 1rem; }}
+  th {{ background: {HEADER_BG}; color: #fff; text-align: left; }}
+  th, td {{ border: 1px solid {HAIRLINE}; padding: .45rem .5rem; vertical-align: top; }}
+  tbody tr:nth-child(even) {{ background: {ROW_ALT_BG}; }}
+  .sev {{ font-weight: 700; }} .num {{ text-align: right; font-variant-numeric: tabular-nums; }}
+  footer {{ margin-top: 1.5rem; color: {INK_MUTED}; font-size: .8rem; }}
+  /* Print / save-as-PDF: fit an A4 portrait page */
+  @page {{ size: A4 portrait; margin: 12mm; }}
+  @media print {{
+    * {{ -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
+    body {{ margin: 0; max-width: none; font-size: 8pt; }}
+    h1 {{ font-size: 16pt; }} h2 {{ font-size: 11pt; }}
+    table {{ table-layout: fixed; width: 100%; font-size: 7pt; }}
+    th, td {{ padding: 3pt 4pt; overflow-wrap: break-word; word-break: break-word; }}
+    th:nth-child(1), td:nth-child(1) {{ width: 12%; }}
+    th:nth-child(2), td:nth-child(2) {{ width: 9%; }}
+    th:nth-child(3), td:nth-child(3) {{ width: 9%; }}
+    th:nth-child(4), td:nth-child(4) {{ width: 17%; }}
+    th:nth-child(5), td:nth-child(5) {{ width: 27%; }}
+    th:nth-child(6), td:nth-child(6) {{ width: 26%; }}
+    thead {{ display: table-header-group; }}
+    tr {{ break-inside: avoid; page-break-inside: avoid; }}
+  }}
+"""
+
+
 def render_html(rows, stats, path, generated, status,
                 title=DEFAULT_TITLE, subtitle=DEFAULT_SUBTITLE):
     e = html_mod.escape
@@ -476,24 +558,7 @@ def render_html(rows, stats, path, generated, status,
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{e(title)}</title>
-<style>
-  body {{ font-family: system-ui, -apple-system, "Segoe UI", sans-serif; color: {INK};
-         margin: 2rem auto; max-width: 70rem; padding: 0 1rem; }}
-  h1 {{ margin-bottom: .2rem; }} .subtitle {{ color: {INK_SECONDARY}; }}
-  .generated {{ color: {INK_MUTED}; font-size: .85rem; }}
-  hr {{ border: 0; border-top: 1px solid {HAIRLINE}; margin: 1.2rem 0; }}
-  .bar-row {{ display: flex; align-items: center; gap: .6rem; margin: .35rem 0; }}
-  .bar-label {{ width: 5rem; font-weight: 600; font-size: .9rem; }}
-  .bar-track {{ flex: 1; }}
-  .bar {{ display: block; height: 12px; border-radius: 3px; min-width: 3px; }}
-  .bar-count {{ width: 2.5rem; text-align: right; font-variant-numeric: tabular-nums; }}
-  table {{ border-collapse: collapse; width: 100%; font-size: .82rem; margin-top: 1rem; }}
-  th {{ background: {HEADER_BG}; color: #fff; text-align: left; }}
-  th, td {{ border: 1px solid {HAIRLINE}; padding: .45rem .5rem; vertical-align: top; }}
-  tbody tr:nth-child(even) {{ background: {ROW_ALT_BG}; }}
-  .sev {{ font-weight: 700; }} .num {{ text-align: right; font-variant-numeric: tabular-nums; }}
-  footer {{ margin-top: 1.5rem; color: {INK_MUTED}; font-size: .8rem; }}
-</style></head><body>
+<style>{_HTML_STYLE}</style></head><body>
 <h1>{e(title)}</h1>
 <p class="subtitle">{e(subtitle)}</p>
 <p class="generated">Generated: {e(generated)}</p>

@@ -81,6 +81,40 @@ def test_group_to_row_field_fallbacks():
     assert row["remediation"] == "Avoid eval()"
 
 
+def test_description_never_empty():
+    # 1. falls back to a member issue's description
+    row = ar.group_to_row({"id": 1, "type": "sast", "severity": "high", "title": "t"},
+                          member_count=2,
+                          member_issues=[{"id": 9}, {"id": 10, "summary": "from issue"}])
+    assert row["description"] == "from issue"
+    # 2. synthesized from structured fields
+    row = ar.group_to_row(
+        {"id": 2, "type": "open_source", "severity": "high", "title": "t",
+         "affected_package": "openssl", "cve_ids": ["CVE-1", "CVE-2"]},
+        member_count=3,
+        member_issues=[{"affected_file": "a.py"}, {"affected_file": "b.py"}])
+    assert "openssl" in row["description"]
+    assert "CVE-1" in row["description"]
+    assert "a.py" in row["description"]
+    # 3. generic last resort — but never empty
+    row = ar.group_to_row({"id": 3, "type": "ai_pentest", "severity": "critical",
+                           "title": "t"}, member_count=5)
+    assert "5 instances" in row["description"]
+
+
+def test_remediation_never_empty():
+    row = ar.group_to_row({"id": 4, "type": "sast", "severity": "low", "title": "t"})
+    assert "Aikido platform" in row["remediation"]
+
+
+def test_html_has_print_stylesheet(tmp_path):
+    rows = ar.load_demo_rows(TOOLS_DIR / "aikido_sample_data.json")
+    out = tmp_path / "report.html"
+    ar.render_html(rows, ar.summarize(rows), out, "April 3, 2026", "open")
+    text = out.read_text(encoding="utf-8")
+    assert "@page" in text and "@media print" in text
+
+
 def test_sorting_severity_then_count():
     rows = ar.sort_rows([
         {"severity": "low", "count": 99, "title": "z"},
