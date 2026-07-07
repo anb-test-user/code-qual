@@ -712,6 +712,19 @@ def main(argv=None):
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
 
+    if args.format == "pdf":
+        # fail fast: don't spend minutes fetching only to die at render time
+        try:
+            import reportlab  # noqa: F401
+        except ImportError:
+            raise SystemExit(
+                "reportlab is not installed (needed for PDF output). Install it:\n"
+                "  python3 -m pip install --user reportlab\n"
+                "or render HTML instead, which needs no extra install, and print "
+                "it to PDF from your browser:\n"
+                f"  python3 {Path(sys.argv[0]).name} -f html -o report.html"
+            )
+
     if args.demo:
         rows = load_demo_rows(args.demo_data)
     else:
