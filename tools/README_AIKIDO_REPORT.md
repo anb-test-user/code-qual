@@ -64,11 +64,25 @@ only if you explicitly want everything.
 | `-f, --format` | `pdf` (default), `html`, `csv` |
 | `-o, --output` | output path |
 | `--title`, `--subtitle` | report heading text (defaults match the reference report) |
-| `--base-url` | Aikido base URL (default `https://app.aikido.dev`; also `AIKIDO_BASE_URL`) |
+| `--base-url` | Aikido base URL (default `https://app.me.aikido.dev`, the ME-region instance; other regions use `https://app.aikido.dev`; also `AIKIDO_BASE_URL`) |
 | `--max-workers` | concurrent group-detail requests (default 5) |
 | `--demo` | render from `aikido_sample_data.json` instead of the API |
 | `--dump-json PATH` | also save the raw API payloads |
 | `-v` | verbose progress / retry logging |
+
+## Windows
+
+The script is Windows-compatible: use `py` instead of `python3`, and `start`
+instead of `open`. In PowerShell:
+
+```powershell
+py -m pip install requests reportlab
+$env:AIKIDO_CLIENT_ID="..."; $env:AIKIDO_CLIENT_SECRET="..."
+py aikido_report.py                       # PDF
+py aikido_report.py -f html -o report.html; start report.html
+```
+
+CSV output is written with a UTF-8 BOM so it opens correctly in Excel.
 
 ## How it works
 

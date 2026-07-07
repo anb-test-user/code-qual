@@ -139,7 +139,8 @@ def test_render_csv(tmp_path):
     rows = ar.load_demo_rows(TOOLS_DIR / "aikido_sample_data.json")
     out = tmp_path / "report.csv"
     ar.render_csv(rows, out)
-    lines = out.read_text(encoding="utf-8").splitlines()
+    assert out.read_bytes().startswith(b"\xef\xbb\xbf"), "BOM needed for Excel on Windows"
+    lines = out.read_text(encoding="utf-8-sig").splitlines()
     assert lines[0].split(",")[0:2] == ["Type", "Severity"]
     assert len(lines) == 1 + 32
 

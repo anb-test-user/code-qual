@@ -36,7 +36,7 @@ Then either:
   exchanges them for a bearer token via the OAuth2 client-credentials grant), or
 * export ``AIKIDO_API_TOKEN`` with a ready-made bearer token.
 
-Usage
+Usage (macOS/Linux: ``python3 …``; Windows: ``py …``)
 -----
     uv run tools/aikido_report.py                       # live, writes PDF
     python3 tools/aikido_report.py --demo               # offline sample data
@@ -50,6 +50,7 @@ access; ``--demo -f csv``/``html`` runs on the standard library alone.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import csv
 import html as html_mod
 import json
@@ -76,7 +77,9 @@ def _inline_credential(name):
     return str(value).strip() if value else ""
 
 
-DEFAULT_BASE_URL = "https://app.aikido.dev"
+# Default targets the ME-region instance; other regions use
+# https://app.aikido.dev (override via --base-url or AIKIDO_BASE_URL).
+DEFAULT_BASE_URL = "https://app.me.aikido.dev"
 TOKEN_PATH = "/api/oauth/token"
 API_PREFIX = "/api/public/v1"
 
@@ -483,7 +486,8 @@ def executive_summary(stats, status):
 
 
 def render_csv(rows, path):
-    with open(path, "w", newline="", encoding="utf-8") as fh:
+    # utf-8-sig: the BOM makes Excel on Windows detect UTF-8 correctly
+    with open(path, "w", newline="", encoding="utf-8-sig") as fh:
         writer = csv.writer(fh)
         writer.writerow(COLUMNS)
         for r in rows:
@@ -809,6 +813,10 @@ def _collect_rows(args):
 
 
 def main(argv=None):
+    for stream in (sys.stdout, sys.stderr):
+        # best-effort: legacy Windows consoles reject non-ASCII (arrows, dashes)
+        with contextlib.suppress(AttributeError, ValueError, OSError):
+            stream.reconfigure(errors="replace")
     args = build_arg_parser().parse_args(argv)
     if args.format == "pdf":
         _require_reportlab()
