@@ -677,7 +677,7 @@ def render_pdf(rows, stats, path, generated, status,
 # CLI
 # ---------------------------------------------------------------------------
 
-def main(argv=None):
+def build_arg_parser():
     parser = argparse.ArgumentParser(
         description="Build a security report (with remediation column) from the Aikido API.")
     parser.add_argument("--status", default="open",
@@ -710,35 +710,45 @@ def main(argv=None):
     parser.add_argument("--dump-json", metavar="PATH",
                         help="also save the raw API payloads (for debugging field names)")
     parser.add_argument("-v", "--verbose", action="store_true")
-    args = parser.parse_args(argv)
+    return parser
 
-    if args.format == "pdf":
-        # fail fast: don't spend minutes fetching only to die at render time
-        try:
-            import reportlab  # noqa: F401
-        except ImportError:
-            raise SystemExit(
-                "reportlab is not installed (needed for PDF output). Install it:\n"
-                "  python3 -m pip install --user reportlab\n"
-                "or render HTML instead, which needs no extra install, and print "
-                "it to PDF from your browser:\n"
-                f"  python3 {Path(sys.argv[0]).name} -f html -o report.html"
-            )
 
+def _require_reportlab():
+    """Fail fast: don't spend minutes fetching only to die at render time."""
+    try:
+        import reportlab  # noqa: F401
+    except ImportError:
+        raise SystemExit(
+            "reportlab is not installed (needed for PDF output). Install it:\n"
+            "  python3 -m pip install --user reportlab\n"
+            "or render HTML instead, which needs no extra install, and print "
+            "it to PDF from your browser:\n"
+            f"  python3 {Path(sys.argv[0]).name} -f html -o report.html"
+        )
+
+
+def _collect_rows(args):
     if args.demo:
-        rows = load_demo_rows(args.demo_data)
-    else:
-        client = AikidoClient(base_url=args.base_url, client_id=args.client_id,
-                              client_secret=args.client_secret, token=args.token,
-                              verbose=args.verbose)
-        dump = {} if args.dump_json else None
-        rows = fetch_rows(client, status=args.status, max_workers=args.max_workers,
-                          dump=dump)
-        if args.dump_json:
-            Path(args.dump_json).write_text(json.dumps(dump, indent=2, default=str),
-                                            encoding="utf-8")
-            print(f"Raw API payloads saved to {args.dump_json}", file=sys.stderr)
+        return load_demo_rows(args.demo_data)
+    client = AikidoClient(base_url=args.base_url, client_id=args.client_id,
+                          client_secret=args.client_secret, token=args.token,
+                          verbose=args.verbose)
+    dump = {} if args.dump_json else None
+    rows = fetch_rows(client, status=args.status, max_workers=args.max_workers,
+                      dump=dump)
+    if args.dump_json:
+        Path(args.dump_json).write_text(json.dumps(dump, indent=2, default=str),
+                                        encoding="utf-8")
+        print(f"Raw API payloads saved to {args.dump_json}", file=sys.stderr)
+    return rows
 
+
+def main(argv=None):
+    args = build_arg_parser().parse_args(argv)
+    if args.format == "pdf":
+        _require_reportlab()
+
+    rows = _collect_rows(args)
     if not rows:
         print("No issues found for the given filters — nothing to report.", file=sys.stderr)
         return 1
