@@ -458,49 +458,46 @@ def render_html(rows, stats, path, generated, status):
     Path(path).write_text(doc, encoding="utf-8")
 
 
-def render_pdf(rows, stats, path, generated, status):
+def _pdf_styles():
     from reportlab.lib import colors
     from reportlab.lib.enums import TA_LEFT
-    from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import ParagraphStyle
-    from reportlab.platypus import (Flowable, HRFlowable, Paragraph,
-                                    SimpleDocTemplate, Spacer, Table, TableStyle)
-
-    margin = 36
-    usable = A4[0] - 2 * margin
-
-    ink = colors.HexColor(INK)
-    ink_secondary = colors.HexColor(INK_SECONDARY)
-    ink_muted = colors.HexColor(INK_MUTED)
-    hairline = colors.HexColor(HAIRLINE)
 
     def style(name, **kw):
         base = dict(fontName="Helvetica", fontSize=8, leading=10.5,
-                    textColor=ink, alignment=TA_LEFT)
+                    textColor=colors.HexColor(INK), alignment=TA_LEFT)
         base.update(kw)
         return ParagraphStyle(name, **base)
 
-    title_style = style("title", fontName="Helvetica-Bold", fontSize=22, leading=26)
-    subtitle_style = style("subtitle", fontSize=11, leading=14, textColor=ink_secondary)
-    generated_style = style("generated", fontSize=9, leading=12, textColor=ink_muted)
-    h2_style = style("h2", fontName="Helvetica-Bold", fontSize=13, leading=16,
-                     spaceBefore=14, spaceAfter=6)
-    body_style = style("body", fontSize=9.5, leading=13.5)
-    # break-anywhere wrap only where long unbreakable tokens occur (package
-    # names, file paths); plain English cells wrap at spaces
-    cell_style = style("cell")
-    long_token_cell_style = style("longcell", wordWrap="CJK")
-    header_cell_style = style("headercell", fontName="Helvetica-Bold",
-                              textColor=colors.white)
+    return {
+        "title": style("title", fontName="Helvetica-Bold", fontSize=22, leading=26),
+        "subtitle": style("subtitle", fontSize=11, leading=14,
+                          textColor=colors.HexColor(INK_SECONDARY)),
+        "generated": style("generated", fontSize=9, leading=12,
+                           textColor=colors.HexColor(INK_MUTED)),
+        "h2": style("h2", fontName="Helvetica-Bold", fontSize=13, leading=16,
+                    spaceBefore=14, spaceAfter=6),
+        "body": style("body", fontSize=9.5, leading=13.5),
+        # break-anywhere wrap only where long unbreakable tokens occur (package
+        # names, file paths); plain English cells wrap at spaces
+        "cell": style("cell"),
+        "longcell": style("longcell", wordWrap="CJK"),
+        "headercell": style("headercell", fontName="Helvetica-Bold",
+                            textColor=colors.white),
+    }
+
+
+def _severity_bars(counts, width):
+    from reportlab.lib import colors
+    from reportlab.platypus import Flowable
 
     class SeverityBars(Flowable):
         """Severity distribution: label — bar — count, one row per severity."""
 
         ROW_H, BAR_H, LABEL_W, COUNT_W = 20, 9, 72, 34
 
-        def __init__(self, counts, width):
+        def __init__(self):
             super().__init__()
-            self.counts = counts
             self.width = width
             self.height = self.ROW_H * len(SEVERITIES)
 
@@ -509,10 +506,11 @@ def render_pdf(rows, stats, path, generated, status):
 
         def draw(self):
             c = self.canv
-            max_count = max(self.counts.values()) or 1
+            ink = colors.HexColor(INK)
+            max_count = max(counts.values()) or 1
             track_w = self.width - self.LABEL_W - self.COUNT_W - 16
             for i, sev in enumerate(SEVERITIES):
-                count = self.counts.get(sev, 0)
+                count = counts.get(sev, 0)
                 y = self.height - (i + 1) * self.ROW_H
                 y_bar = y + (self.ROW_H - self.BAR_H) / 2
                 y_text = y_bar + 1.5
@@ -529,29 +527,24 @@ def render_pdf(rows, stats, path, generated, status):
                 c.drawRightString(self.LABEL_W + track_w + self.COUNT_W,
                                   y_text, str(count))
 
-    def footer(canvas, doc_):
-        canvas.saveState()
-        canvas.setStrokeColor(hairline)
-        canvas.setLineWidth(0.5)
-        canvas.line(margin, margin - 8, A4[0] - margin, margin - 8)
-        canvas.setFont("Helvetica", 7.5)
-        canvas.setFillColor(ink_muted)
-        canvas.drawString(margin, margin - 20, "Confidential — Aikido Security Report")
-        canvas.drawRightString(A4[0] - margin, margin - 20, f"Page {doc_.page}")
-        canvas.restoreState()
+    return SeverityBars()
 
-    header = [Paragraph(c, header_cell_style) for c in COLUMNS]
-    data = [header]
+
+def _findings_table(rows, styles, usable):
+    from reportlab.lib import colors
+    from reportlab.platypus import Paragraph, Table, TableStyle
+
+    data = [[Paragraph(c, styles["headercell"]) for c in COLUMNS]]
     for r in rows:
         sev = r["severity"]
         data.append([
-            Paragraph(html_mod.escape(r["type"]), cell_style),
+            Paragraph(html_mod.escape(r["type"]), styles["cell"]),
             Paragraph(f'<b><font color="{SEVERITY_TEXT[sev]}">{sev.upper()}</font></b>',
-                      cell_style),
-            Paragraph(str(r["count"]), cell_style),
-            Paragraph(html_mod.escape(r["title"]), long_token_cell_style),
-            Paragraph(html_mod.escape(r["description"]), long_token_cell_style),
-            Paragraph(html_mod.escape(r["remediation"]), long_token_cell_style),
+                      styles["cell"]),
+            Paragraph(str(r["count"]), styles["cell"]),
+            Paragraph(html_mod.escape(r["title"]), styles["longcell"]),
+            Paragraph(html_mod.escape(r["description"]), styles["longcell"]),
+            Paragraph(html_mod.escape(r["remediation"]), styles["longcell"]),
         ])
 
     table = Table(
@@ -562,32 +555,62 @@ def render_pdf(rows, stats, path, generated, status):
     table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(HEADER_BG)),
         ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor(ROW_ALT_BG)]),
-        ("GRID", (0, 0), (-1, -1), 0.5, hairline),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor(HAIRLINE)),
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
         ("LEFTPADDING", (0, 0), (-1, -1), 5),
         ("RIGHTPADDING", (0, 0), (-1, -1), 5),
         ("TOPPADDING", (0, 0), (-1, -1), 4),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
     ]))
+    return table
+
+
+def _page_footer(margin, page_width):
+    from reportlab.lib import colors
+
+    def footer(canvas, doc_):
+        canvas.saveState()
+        canvas.setStrokeColor(colors.HexColor(HAIRLINE))
+        canvas.setLineWidth(0.5)
+        canvas.line(margin, margin - 8, page_width - margin, margin - 8)
+        canvas.setFont("Helvetica", 7.5)
+        canvas.setFillColor(colors.HexColor(INK_MUTED))
+        canvas.drawString(margin, margin - 20, "Confidential — Aikido Security Report")
+        canvas.drawRightString(page_width - margin, margin - 20, f"Page {doc_.page}")
+        canvas.restoreState()
+
+    return footer
+
+
+def render_pdf(rows, stats, path, generated, status):
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
+    from reportlab.platypus import (HRFlowable, Paragraph, SimpleDocTemplate,
+                                    Spacer)
+
+    margin = 36
+    usable = A4[0] - 2 * margin
+    styles = _pdf_styles()
 
     story = [
-        Paragraph("Security Vulnerability Report", title_style),
+        Paragraph("Security Vulnerability Report", styles["title"]),
         Spacer(1, 4),
-        Paragraph("Enterprise Security Assessment — Aikido Platform", subtitle_style),
+        Paragraph("Enterprise Security Assessment — Aikido Platform", styles["subtitle"]),
         Spacer(1, 2),
-        Paragraph(f"Generated: {generated}", generated_style),
+        Paragraph(f"Generated: {generated}", styles["generated"]),
         Spacer(1, 8),
-        HRFlowable(width="100%", thickness=0.75, color=hairline),
-        Paragraph("Executive Summary", h2_style),
-        Paragraph(executive_summary(stats, status), body_style),
-        Paragraph("Severity Distribution", h2_style),
-        SeverityBars(stats["by_severity"], usable),
+        HRFlowable(width="100%", thickness=0.75, color=colors.HexColor(HAIRLINE)),
+        Paragraph("Executive Summary", styles["h2"]),
+        Paragraph(executive_summary(stats, status), styles["body"]),
+        Paragraph("Severity Distribution", styles["h2"]),
+        _severity_bars(stats["by_severity"], usable),
         Paragraph(
             f'Detailed Findings <font size="9" color="{INK_MUTED}">'
-            f'&nbsp;&nbsp;{stats["groups"]} issue groups</font>', h2_style),
-        table,
+            f'&nbsp;&nbsp;{stats["groups"]} issue groups</font>', styles["h2"]),
+        _findings_table(rows, styles, usable),
     ]
 
+    footer = _page_footer(margin, A4[0])
     doc = SimpleDocTemplate(
         str(path), pagesize=A4,
         leftMargin=margin, rightMargin=margin, topMargin=margin + 6, bottomMargin=margin + 14,
