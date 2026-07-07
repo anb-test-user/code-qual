@@ -70,6 +70,12 @@ AIKIDO_CLIENT_ID = ""
 AIKIDO_CLIENT_SECRET = ""
 AIKIDO_API_TOKEN = ""  # alternative: a ready-made bearer token
 
+def _inline_credential(name):
+    """Read a fill-in constant from above, tolerating a deleted/edited line."""
+    value = globals().get(name, "")
+    return str(value).strip() if value else ""
+
+
 DEFAULT_BASE_URL = "https://app.aikido.dev"
 TOKEN_PATH = "/api/oauth/token"
 API_PREFIX = "/api/public/v1"
@@ -686,11 +692,14 @@ def main(argv=None):
     parser.add_argument("--base-url", default=os.environ.get("AIKIDO_BASE_URL", DEFAULT_BASE_URL),
                         help=f"Aikido base URL (default: {DEFAULT_BASE_URL})")
     parser.add_argument("--client-id",
-                        default=os.environ.get("AIKIDO_CLIENT_ID") or AIKIDO_CLIENT_ID)
+                        default=os.environ.get("AIKIDO_CLIENT_ID")
+                        or _inline_credential("AIKIDO_CLIENT_ID"))
     parser.add_argument("--client-secret",
-                        default=os.environ.get("AIKIDO_CLIENT_SECRET") or AIKIDO_CLIENT_SECRET)
+                        default=os.environ.get("AIKIDO_CLIENT_SECRET")
+                        or _inline_credential("AIKIDO_CLIENT_SECRET"))
     parser.add_argument("--token",
-                        default=os.environ.get("AIKIDO_API_TOKEN") or AIKIDO_API_TOKEN,
+                        default=os.environ.get("AIKIDO_API_TOKEN")
+                        or _inline_credential("AIKIDO_API_TOKEN"),
                         help="ready-made bearer token (skips the OAuth exchange)")
     parser.add_argument("--max-workers", type=int, default=5,
                         help="concurrent group-detail requests (default: 5)")
