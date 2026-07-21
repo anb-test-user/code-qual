@@ -75,10 +75,29 @@ def test_filter_issues_scope():
 
 def test_server_side_filters():
     assert ar._server_side_filters(types={"sast"}, team="12", repos=["34"]) == {
-        "filter_issue_type": "sast", "filter_team_id": 12, "filter_code_repo_id": 34}
-    # non-numeric / multi-value filters stay client-side only
+        "filter_issue_type": ["sast"], "filter_team_id": 12, "filter_code_repo_id": 34}
+    # repeatable params are sent as lists; name-based filters stay client-side
     assert ar._server_side_filters(types={"sast", "iac"}, team="Platform",
-                                   repos=["a", "b"]) == {}
+                                   repos=["a", "b"],
+                                   severities={"high", "critical"}) == {
+        "filter_issue_type": ["iac", "sast"],
+        "filter_severities": ["critical", "high"]}
+
+
+def test_parse_severities():
+    assert ar.parse_severities("Critical, high") == {"critical", "high"}
+    assert ar.parse_severities(None) is None
+    with pytest.raises(SystemExit):
+        ar.parse_severities("banana")
+
+
+def test_cli_severity_filter(tmp_path):
+    out = tmp_path / "sev.csv"
+    assert ar.main(["--demo", "--severity", "critical", "-f", "csv",
+                    "-o", str(out)]) == 0
+    lines = out.read_text(encoding="utf-8-sig").splitlines()
+    assert len(lines) == 1 + 5  # header + the 5 critical demo groups
+    assert all("CRITICAL" in ln for ln in lines[1:])
 
 
 def test_demo_type_filter():

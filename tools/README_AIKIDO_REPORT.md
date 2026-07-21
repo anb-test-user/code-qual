@@ -85,6 +85,7 @@ the generated date ("Scope: …").
 | `--team` | only issues of this team (id or exact name) |
 | `--repo` | only issues of these repositories (ids or name substrings, comma-separated) |
 | `--type` | only these scan types (comma-separated) |
+| `--severity` | only these severities, e.g. `critical,high` (comma-separated) |
 | `--list-teams`, `--list-repos` | print ids/names to use with the flags above, then exit |
 | `-f, --format` | `pdf` (default), `html`, `csv` |
 | `-o, --output` | output path |

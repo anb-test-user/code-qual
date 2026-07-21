@@ -287,6 +287,22 @@ def parse_types(value):
     return types or None
 
 
+def parse_severities(value):
+    """'critical,high' -> {'critical', 'high'} (validated)."""
+    if not value:
+        return None
+    severities = set()
+    for part in str(value).split(","):
+        part = part.strip().lower()
+        if not part:
+            continue
+        if part not in SEVERITY_RANK:
+            raise SystemExit(f"Unknown severity '{part}' — use any of: "
+                             + ", ".join(SEVERITIES))
+        severities.add(part)
+    return severities or None
+
+
 def _issue_field_values(issue, keys):
     """All values an issue holds under any of ``keys``, lowered, flattening
     lists/dicts (e.g. a ``teams`` array)."""
@@ -480,25 +496,31 @@ class AikidoClient:
         raise SystemExit(f"Unexpected /issues/groups/{group_id} response shape")
 
 
-def _server_side_filters(types=None, team=None, repos=None):
-    """Best-effort server-side filter params; the client-side filter_issues()
-    pass is authoritative regardless of whether the API honors these."""
+def _server_side_filters(types=None, team=None, repos=None, severities=None):
+    """Server-side filter params. filter_code_repo_id, filter_issue_type
+    (repeatable), and filter_severities (repeatable) are confirmed against a
+    live implementation; filter_team_id is speculative (no team filter appears
+    in the export docs) — the client-side filter_issues() pass is
+    authoritative for scoping either way."""
     extra = {}
     if team and str(team).isdigit():
         extra["filter_team_id"] = int(team)
     if repos and len(repos) == 1 and str(repos[0]).isdigit():
         extra["filter_code_repo_id"] = int(repos[0])
-    if types and len(types) == 1:
-        extra["filter_issue_type"] = next(iter(types))
+    if types:
+        extra["filter_issue_type"] = sorted(types)
+    if severities:
+        extra["filter_severities"] = sorted(severities)
     return extra
 
 
 def fetch_rows(client, status="open", max_workers=5, dump=None,
-               types=None, team=None, repos=None):
+               types=None, team=None, repos=None, severities=None):
     """Live pipeline: export issues, fetch each group's details, normalize rows."""
     client.authenticate()
     print(f"Exporting issues (status={status})…", file=sys.stderr)
-    issues = client.export_issues(status, **_server_side_filters(types, team, repos))
+    issues = client.export_issues(
+        status, **_server_side_filters(types, team, repos, severities))
     matching = filter_issues_by_status(issues, status)
     if len(matching) != len(issues):
         print(f"  dropped {len(issues) - len(matching)} issues whose status "
@@ -855,6 +877,9 @@ def build_arg_parser():
     parser.add_argument("--type", dest="types", default=None,
                         help="only these scan types, comma-separated (e.g. "
                              "sast,secrets,open_source,iac,cloud,dast)")
+    parser.add_argument("--severity", default=None,
+                        help="only these severities, comma-separated "
+                             "(e.g. critical,high)")
     parser.add_argument("--list-teams", action="store_true",
                         help="print team ids/names and exit")
     parser.add_argument("--list-repos", action="store_true",
@@ -952,7 +977,7 @@ def _print_directory(client, path):
     return 0
 
 
-def _collect_rows(args, types, repos):
+def _collect_rows(args, types, repos, severities):
     if args.demo:
         if args.team or repos:
             print("note: --team/--repo are ignored in --demo mode", file=sys.stderr)
@@ -960,7 +985,8 @@ def _collect_rows(args, types, repos):
     dump = {} if args.dump_json else None
     rows = fetch_rows(_make_client(args), status=args.status,
                       max_workers=args.max_workers, dump=dump,
-                      types=types, team=args.team, repos=repos)
+                      types=types, team=args.team, repos=repos,
+                      severities=severities)
     if args.dump_json:
         Path(args.dump_json).write_text(json.dumps(dump, indent=2, default=str),
                                         encoding="utf-8")
@@ -982,7 +1008,12 @@ def main(argv=None):
 
     types = parse_types(args.types)
     repos = [r.strip() for r in args.repo.split(",") if r.strip()] if args.repo else None
-    rows = _collect_rows(args, types, repos)
+    severities = parse_severities(args.severity)
+    rows = _collect_rows(args, types, repos, severities)
+    if severities:
+        # authoritative severity filter on the final rows (covers demo mode
+        # and any API that ignores filter_severities)
+        rows = [r for r in rows if r["severity"] in severities]
     if not rows:
         print("No issues found for the given filters — nothing to report.", file=sys.stderr)
         return 1
@@ -994,6 +1025,9 @@ def main(argv=None):
         scope_bits.append("repositories: " + ", ".join(repos))
     if types:
         scope_bits.append("scan types: " + ", ".join(sorted(types)))
+    if severities:
+        scope_bits.append("severities: " + ", ".join(
+            sorted(severities, key=SEVERITY_RANK.get)))
     scope = "; ".join(scope_bits)
 
     stats = summarize(rows)
