@@ -125,6 +125,8 @@ TYPE_LABELS = {
     "end_of_life": "End-of-Life Runtime",
     "mobile": "Mobile Finding",
     "license": "License Issue",
+    "ai_pentest": "AI Pentest",
+    "scm_security": "SCM Security",
 }
 
 COLUMNS = [
@@ -207,14 +209,19 @@ def build_description(group, member_issues, count, type_label):
         package = pick(member_issues[0], "affected_package", "package_name", "package")
     if package:
         bits.append(f"Affects {package}")
-    cves = pick(group, "cve_ids", "cves", "cve_id")
+    cves = pick(group, "related_cve_ids", "cve_ids", "cves", "cve_id")
     if cves:
         bits.append(f"CVEs: {cves}")
-    locations = sorted({
+    group_locations = group.get("locations") if isinstance(group, dict) else None
+    location_names = {
+        str(pick(loc, "name", default="")).strip()
+        for loc in (group_locations or []) if isinstance(loc, dict)
+    } | {
         str(pick(i, "affected_file", "file", "path", "location", "domain", "target",
                  default="")).strip()
         for i in (member_issues or [])
-    } - {""})
+    }
+    locations = sorted(location_names - {""})
     if locations:
         shown = ", ".join(locations[:3])
         more = f" (+{len(locations) - 3} more)" if len(locations) > 3 else ""
@@ -250,12 +257,16 @@ def group_to_row(group, member_count=None, member_issues=None):
         pick(group, "severity_score", "score", default=None),
     )
     type_label = humanize_type(pick(group, "type", "issue_type", "category"))
-    remediation = str(pick(group, "remediation", "fix", "fix_suggestion",
-                           "recommended_fix", "remediation_suggestion", "solution",
-                           "how_to_fix"))
+    # how_to_fix is the documented field name; the rest are fallbacks
+    remediation = str(pick(group, "how_to_fix", "remediation", "fix",
+                           "fix_suggestion", "recommended_fix",
+                           "remediation_suggestion", "solution"))
     if not remediation:
         remediation = ("No automated fix suggestion available — review this "
                        "finding in the Aikido platform.")
+    time_to_fix = pick(group, "time_to_fix_minutes", default=None)
+    if isinstance(time_to_fix, (int, float)) and time_to_fix > 0:
+        remediation += f" (Estimated fix time: ~{int(time_to_fix)} min.)"
     return {
         "group_id": pick(group, "id", "group_id", default=""),
         "type": type_label,

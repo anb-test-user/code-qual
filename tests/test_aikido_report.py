@@ -34,7 +34,29 @@ def test_humanize_type():
     assert ar.humanize_type("open_source") == "Dependency Vulnerability"
     assert ar.humanize_type("sast") == "SAST Finding"
     assert ar.humanize_type("leaked_secret") == "Secret Detection"
+    assert ar.humanize_type("ai_pentest") == "AI Pentest"
+    assert ar.humanize_type("scm_security") == "SCM Security"
     assert ar.humanize_type("some_new_type") == "Some New Type"
+
+
+def test_documented_group_schema_fields():
+    # mirrors the official getissuegroupdetails response schema
+    row = ar.group_to_row({
+        "id": 24, "type": "open_source", "title": "firefox-esr",
+        "description": None, "severity": "critical", "severity_score": 90,
+        "group_status": "new", "time_to_fix_minutes": 30,
+        "locations": [
+            {"id": 1, "name": "REST API service", "type": "code_repo"},
+            {"id": 2, "name": "Cloud infrastructure", "type": "cloud"},
+        ],
+        "how_to_fix": "You can fix this issue by ...",
+        "related_cve_ids": ["CVE-2024-8385", "CVE-2024-8381"],
+    }, member_count=3)
+    assert row["remediation"].startswith("You can fix this issue by ...")
+    assert "~30 min" in row["remediation"]
+    # null description -> synthesized from CVEs + locations
+    assert "CVE-2024-8385" in row["description"]
+    assert "REST API service" in row["description"]
 
 
 def test_filter_issues_by_status():
