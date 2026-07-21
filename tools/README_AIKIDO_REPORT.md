@@ -58,9 +58,34 @@ API for open issues only (`filter_status=open`), and a client-side check drops
 any returned issue whose own status field says otherwise. Pass `--status all`
 only if you explicitly want everything.
 
+### Scoping the report
+
+By default the report covers **all teams, repositories, and scan types**.
+Narrow it with:
+
+```bash
+python3 tools/aikido_report.py --list-teams          # discover team ids
+python3 tools/aikido_report.py --list-repos          # discover repository ids
+python3 tools/aikido_report.py --team 12             # one team (id or exact name)
+python3 tools/aikido_report.py --repo backend-api    # repos (ids or name substrings, comma-separated)
+python3 tools/aikido_report.py --type sast,secrets   # scan types only
+python3 tools/aikido_report.py --team 12 --repo 42,billing --type open_source
+```
+
+Scan type values: `open_source` (dependencies), `sast`, `secrets`
+(`leaked_secret`), `iac`, `cloud`, `dast`, `surface`, `malware`, `eol`.
+Filters are applied server-side where the API supports it **and** re-checked
+client-side against each exported issue, so out-of-scope issues cannot leak
+into the report either way. Active filters are printed on the report under
+the generated date ("Scope: …").
+
 | Flag | Meaning |
 | --- | --- |
 | `--status` | issue status filter (default `open` — non-open issues are excluded; `all` includes everything) |
+| `--team` | only issues of this team (id or exact name) |
+| `--repo` | only issues of these repositories (ids or name substrings, comma-separated) |
+| `--type` | only these scan types (comma-separated) |
+| `--list-teams`, `--list-repos` | print ids/names to use with the flags above, then exit |
 | `-f, --format` | `pdf` (default), `html`, `csv` |
 | `-o, --output` | output path |
 | `--title`, `--subtitle` | report heading text (defaults match the reference report) |

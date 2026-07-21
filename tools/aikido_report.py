@@ -268,6 +268,64 @@ def group_to_row(group, member_count=None, member_issues=None):
     }
 
 
+TYPE_ALIASES = {
+    "deps": "open_source", "dependency": "open_source", "dependencies": "open_source",
+    "secret": "leaked_secret", "secrets": "leaked_secret",
+    "surface": "surface_monitoring",
+}
+
+
+def parse_types(value):
+    """'sast,secrets,open-source' -> {'sast', 'leaked_secret', 'open_source'}."""
+    if not value:
+        return None
+    types = set()
+    for part in str(value).split(","):
+        part = part.strip().lower().replace("-", "_").replace(" ", "_")
+        if part:
+            types.add(TYPE_ALIASES.get(part, part))
+    return types or None
+
+
+def _issue_field_values(issue, keys):
+    """All values an issue holds under any of ``keys``, lowered, flattening
+    lists/dicts (e.g. a ``teams`` array)."""
+    values = set()
+    if not isinstance(issue, dict):
+        return values
+    for key in keys:
+        v = issue.get(key)
+        if v in (None, ""):
+            continue
+        items = v.values() if isinstance(v, dict) else v if isinstance(v, (list, tuple)) else [v]
+        values.update(str(x).strip().lower() for x in items if x not in (None, ""))
+    return values
+
+
+def filter_issues(issues, types=None, team=None, repos=None):
+    """Client-side scope filters — the authoritative layer on top of the
+    server-side filter params (whose exact names may vary by API version)."""
+    def matches(issue):
+        if types:
+            itype = str(pick(issue, "type", "issue_type", default="")).strip().lower()
+            if itype not in types:
+                return False
+        if team:
+            want = str(team).strip().lower()
+            have = _issue_field_values(issue, ("team_id", "team_name", "team", "teams"))
+            if want not in have:
+                return False
+        if repos:
+            ids = _issue_field_values(issue, ("code_repo_id", "repo_id"))
+            names = _issue_field_values(
+                issue, ("code_repo_name", "repo_name", "repository", "repo", "project"))
+            wanted = [str(r).strip().lower() for r in repos]
+            if not any(w in ids or any(w in n for n in names) for w in wanted):
+                return False
+        return True
+    return [i for i in issues if matches(i)]
+
+
 def filter_issues_by_status(issues, status):
     """Client-side safety net for the status filter.
 
@@ -397,10 +455,11 @@ class AikidoClient:
             timeout=timeout or self.timeout,
         )
 
-    def export_issues(self, status="open"):
+    def export_issues(self, status="open", **extra_filters):
         params = {"format": "json"}
         if status and status != "all":
             params["filter_status"] = status
+        params.update(extra_filters)
         # the export can be large on big workspaces — give it extra time
         payload = self._get("/issues/export", timeout=120, **params).json()
         if isinstance(payload, list):
@@ -421,16 +480,40 @@ class AikidoClient:
         raise SystemExit(f"Unexpected /issues/groups/{group_id} response shape")
 
 
-def fetch_rows(client, status="open", max_workers=5, dump=None):
+def _server_side_filters(types=None, team=None, repos=None):
+    """Best-effort server-side filter params; the client-side filter_issues()
+    pass is authoritative regardless of whether the API honors these."""
+    extra = {}
+    if team and str(team).isdigit():
+        extra["filter_team_id"] = int(team)
+    if repos and len(repos) == 1 and str(repos[0]).isdigit():
+        extra["filter_code_repo_id"] = int(repos[0])
+    if types and len(types) == 1:
+        extra["filter_issue_type"] = next(iter(types))
+    return extra
+
+
+def fetch_rows(client, status="open", max_workers=5, dump=None,
+               types=None, team=None, repos=None):
     """Live pipeline: export issues, fetch each group's details, normalize rows."""
     client.authenticate()
     print(f"Exporting issues (status={status})…", file=sys.stderr)
-    issues = client.export_issues(status)
+    issues = client.export_issues(status, **_server_side_filters(types, team, repos))
     matching = filter_issues_by_status(issues, status)
     if len(matching) != len(issues):
         print(f"  dropped {len(issues) - len(matching)} issues whose status "
               f"is not '{status}'", file=sys.stderr)
     issues = matching
+    if types or team or repos:
+        scoped = filter_issues(issues, types=types, team=team, repos=repos)
+        print(f"  scope filters kept {len(scoped)}/{len(issues)} issues",
+              file=sys.stderr)
+        if issues and not scoped:
+            print("  WARNING: all issues were filtered out — check the filter "
+                  "values (--list-teams / --list-repos help), or run with "
+                  "--dump-json to inspect the exported field names.",
+                  file=sys.stderr)
+        issues = scoped
     buckets = group_issues_by_group_id(issues)
     print(f"Fetched {len(issues)} issues in {len(buckets)} issue groups; "
           f"fetching group details…", file=sys.stderr)
@@ -461,9 +544,13 @@ def fetch_rows(client, status="open", max_workers=5, dump=None):
     return sort_rows(rows)
 
 
-def load_demo_rows(path):
+def load_demo_rows(path, types=None):
     data = json.loads(Path(path).read_text(encoding="utf-8"))
-    rows = [group_to_row(g) for g in data.get("issue_groups", [])]
+    groups = data.get("issue_groups", [])
+    if types:
+        groups = [g for g in groups
+                  if str(pick(g, "type", "issue_type", default="")).strip().lower() in types]
+    rows = [group_to_row(g) for g in groups]
     return sort_rows(rows)
 
 
@@ -537,8 +624,9 @@ _HTML_STYLE = f"""
 
 
 def render_html(rows, stats, path, generated, status,
-                title=DEFAULT_TITLE, subtitle=DEFAULT_SUBTITLE):
+                title=DEFAULT_TITLE, subtitle=DEFAULT_SUBTITLE, scope=""):
     e = html_mod.escape
+    scope_line = f'<p class="generated">Scope: {e(scope)}</p>' if scope else ""
     max_count = max((stats["by_severity"][s] for s in SEVERITIES), default=0) or 1
     bars = "".join(
         f'<div class="bar-row"><span class="bar-label">{s.capitalize()}</span>'
@@ -566,6 +654,7 @@ def render_html(rows, stats, path, generated, status,
 <h1>{e(title)}</h1>
 <p class="subtitle">{e(subtitle)}</p>
 <p class="generated">Generated: {e(generated)}</p>
+{scope_line}
 <hr>
 <h2>Executive Summary</h2>
 <p>{e(executive_summary(stats, status))}</p>
@@ -705,7 +794,7 @@ def _page_footer(margin, page_width):
 
 
 def render_pdf(rows, stats, path, generated, status,
-               title=DEFAULT_TITLE, subtitle=DEFAULT_SUBTITLE):
+               title=DEFAULT_TITLE, subtitle=DEFAULT_SUBTITLE, scope=""):
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4
     from reportlab.platypus import (HRFlowable, Paragraph, SimpleDocTemplate,
@@ -721,6 +810,10 @@ def render_pdf(rows, stats, path, generated, status,
         Paragraph(html_mod.escape(subtitle), styles["subtitle"]),
         Spacer(1, 2),
         Paragraph(f"Generated: {generated}", styles["generated"]),
+    ]
+    if scope:
+        story.append(Paragraph(f"Scope: {html_mod.escape(scope)}", styles["generated"]))
+    story += [
         Spacer(1, 8),
         HRFlowable(width="100%", thickness=0.75, color=colors.HexColor(HAIRLINE)),
         Paragraph("Executive Summary", styles["h2"]),
@@ -753,6 +846,19 @@ def build_arg_parser():
                         help="issue status filter (default: open — non-open issues "
                              "such as ignored/snoozed/closed are excluded; "
                              "use 'all' to include everything)")
+    parser.add_argument("--team", default=None,
+                        help="only issues of this team (id or exact name; "
+                             "use --list-teams to discover ids)")
+    parser.add_argument("--repo", default=None,
+                        help="only issues of these repositories, comma-separated "
+                             "(ids or name substrings; use --list-repos)")
+    parser.add_argument("--type", dest="types", default=None,
+                        help="only these scan types, comma-separated (e.g. "
+                             "sast,secrets,open_source,iac,cloud,dast)")
+    parser.add_argument("--list-teams", action="store_true",
+                        help="print team ids/names and exit")
+    parser.add_argument("--list-repos", action="store_true",
+                        help="print code repository ids/names and exit")
     parser.add_argument("--title", default=DEFAULT_TITLE, help="report title")
     parser.add_argument("--subtitle", default=DEFAULT_SUBTITLE, help="report subtitle")
     parser.add_argument("-f", "--format", choices=["pdf", "html", "csv"], default="pdf")
@@ -796,15 +902,41 @@ def _require_reportlab():
         )
 
 
-def _collect_rows(args):
+def _make_client(args):
+    return AikidoClient(base_url=args.base_url, client_id=args.client_id,
+                        client_secret=args.client_secret, token=args.token,
+                        verbose=args.verbose)
+
+
+def _print_directory(client, path):
+    """List teams or code repositories (id + name) to help pick filter values."""
+    client.authenticate()
+    try:
+        payload = client._get(path).json()
+    except Exception as exc:  # endpoint availability varies by plan/API version
+        print(f"Could not list {path}: {exc}\n"
+              "Open the team/repository in the Aikido platform instead — "
+              "the id is in the page URL.", file=sys.stderr)
+        return 1
+    items = payload if isinstance(payload, list) else next(
+        (payload[k] for k in ("data", "items", "results", "teams", "repositories")
+         if isinstance(payload.get(k), list)), [])
+    for item in items:
+        print(f"{str(pick(item, 'id', default='?')):>10}  "
+              f"{pick(item, 'name', 'full_name', 'title')}")
+    print(f"({len(items)} entries)", file=sys.stderr)
+    return 0
+
+
+def _collect_rows(args, types, repos):
     if args.demo:
-        return load_demo_rows(args.demo_data)
-    client = AikidoClient(base_url=args.base_url, client_id=args.client_id,
-                          client_secret=args.client_secret, token=args.token,
-                          verbose=args.verbose)
+        if args.team or repos:
+            print("note: --team/--repo are ignored in --demo mode", file=sys.stderr)
+        return load_demo_rows(args.demo_data, types=types)
     dump = {} if args.dump_json else None
-    rows = fetch_rows(client, status=args.status, max_workers=args.max_workers,
-                      dump=dump)
+    rows = fetch_rows(_make_client(args), status=args.status,
+                      max_workers=args.max_workers, dump=dump,
+                      types=types, team=args.team, repos=repos)
     if args.dump_json:
         Path(args.dump_json).write_text(json.dumps(dump, indent=2, default=str),
                                         encoding="utf-8")
@@ -818,13 +950,27 @@ def main(argv=None):
         with contextlib.suppress(AttributeError, ValueError, OSError):
             stream.reconfigure(errors="replace")
     args = build_arg_parser().parse_args(argv)
+    if args.list_teams or args.list_repos:
+        return _print_directory(_make_client(args),
+                                "/teams" if args.list_teams else "/repositories/code")
     if args.format == "pdf":
         _require_reportlab()
 
-    rows = _collect_rows(args)
+    types = parse_types(args.types)
+    repos = [r.strip() for r in args.repo.split(",") if r.strip()] if args.repo else None
+    rows = _collect_rows(args, types, repos)
     if not rows:
         print("No issues found for the given filters — nothing to report.", file=sys.stderr)
         return 1
+
+    scope_bits = []
+    if args.team:
+        scope_bits.append(f"team {args.team}")
+    if repos:
+        scope_bits.append("repositories: " + ", ".join(repos))
+    if types:
+        scope_bits.append("scan types: " + ", ".join(sorted(types)))
+    scope = "; ".join(scope_bits)
 
     stats = summarize(rows)
     generated = datetime.now().strftime("%B %-d, %Y at %I:%M %p") \
@@ -835,10 +981,10 @@ def main(argv=None):
         render_csv(rows, output)
     elif args.format == "html":
         render_html(rows, stats, output, generated, args.status,
-                    title=args.title, subtitle=args.subtitle)
+                    title=args.title, subtitle=args.subtitle, scope=scope)
     else:
         render_pdf(rows, stats, output, generated, args.status,
-                   title=args.title, subtitle=args.subtitle)
+                   title=args.title, subtitle=args.subtitle, scope=scope)
 
     b = stats["by_severity"]
     print(f"Wrote {output} — {stats['groups']} issue groups / {stats['issues']} issues "

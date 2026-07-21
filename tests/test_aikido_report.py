@@ -50,6 +50,44 @@ def test_filter_issues_by_status():
     assert ar.filter_issues_by_status(issues, "all") == issues
 
 
+def test_parse_types_aliases():
+    assert ar.parse_types("sast, secrets,Open-Source") == \
+        {"sast", "leaked_secret", "open_source"}
+    assert ar.parse_types(None) is None
+    assert ar.parse_types("") is None
+
+
+def test_filter_issues_scope():
+    issues = [
+        {"id": 1, "type": "sast", "team_id": 7, "code_repo_name": "backend-api"},
+        {"id": 2, "type": "open_source", "teams": ["Platform"], "code_repo_id": 42},
+        {"id": 3, "type": "leaked_secret", "team_name": "Mobile",
+         "code_repo_name": "ios-app"},
+    ]
+    assert [i["id"] for i in ar.filter_issues(issues, types={"sast"})] == [1]
+    assert [i["id"] for i in ar.filter_issues(issues, team="7")] == [1]
+    assert [i["id"] for i in ar.filter_issues(issues, team="platform")] == [2]
+    assert [i["id"] for i in ar.filter_issues(issues, repos=["42"])] == [2]
+    assert [i["id"] for i in ar.filter_issues(issues, repos=["backend"])] == [1]
+    assert [i["id"] for i in ar.filter_issues(issues, repos=["backend", "ios"])] == [1, 3]
+    assert ar.filter_issues(issues) == issues
+
+
+def test_server_side_filters():
+    assert ar._server_side_filters(types={"sast"}, team="12", repos=["34"]) == {
+        "filter_issue_type": "sast", "filter_team_id": 12, "filter_code_repo_id": 34}
+    # non-numeric / multi-value filters stay client-side only
+    assert ar._server_side_filters(types={"sast", "iac"}, team="Platform",
+                                   repos=["a", "b"]) == {}
+
+
+def test_demo_type_filter():
+    rows = ar.load_demo_rows(TOOLS_DIR / "aikido_sample_data.json",
+                             types={"leaked_secret"})
+    assert len(rows) == 5
+    assert all(r["type"] == "Secret Detection" for r in rows)
+
+
 def test_grouping_and_counts():
     issues = [
         {"id": 1, "group_id": 10},
