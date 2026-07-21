@@ -1,0 +1,24 @@
+# CodeQual configuration (template).
+# Resolution order: defaults < this file < environment < CLI flags.
+
+[codequal]
+# Claude model used in AI mode.
+model = "claude-sonnet-4-6"
+
+# Exit non-zero when any finding is at or above this severity.
+# One of: critical, high, medium, low, info  (CLI can override, or pass --fail-on none).
+fail_on = "high"
+
+# Concurrent analysis workers for repo/PR scans.
+max_workers = 8
+
+# Drop findings below this confidence (0.0 keeps everything).
+min_confidence = 0.0
+
+# Glob patterns to skip during repo and PR scans (in addition to .gitignore).
+# examples/ and tests/ hold intentionally-flawed fixtures used to exercise the
+# scanner itself, so they are excluded from the quality gate.
+exclude = ["examples/**", "tests/**", "**/vendor/**", "**/*.min.js", "**/__snapshots__/**"]
+
+# Only scan files matching these globs (empty = all supported source files).
+include = []
