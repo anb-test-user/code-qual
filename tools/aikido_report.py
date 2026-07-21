@@ -908,19 +908,43 @@ def _make_client(args):
                         verbose=args.verbose)
 
 
+def _extract_items(payload):
+    if isinstance(payload, list):
+        return payload
+    return next((payload[k] for k in ("data", "items", "results", "teams",
+                                      "repositories")
+                 if isinstance(payload.get(k), list)), [])
+
+
 def _print_directory(client, path):
-    """List teams or code repositories (id + name) to help pick filter values."""
+    """List teams or code repositories (id + name) to help pick filter values.
+
+    The list endpoints paginate; pages are walked (tolerating either 0- or
+    1-based numbering) and deduplicated by id until nothing new appears.
+    """
     client.authenticate()
-    try:
-        payload = client._get(path).json()
-    except Exception as exc:  # endpoint availability varies by plan/API version
-        print(f"Could not list {path}: {exc}\n"
+    seen, items = set(), []
+    error = None
+    for page in range(0, 50):
+        try:
+            payload = client._get(path, page=page, per_page=100).json()
+        except Exception as exc:  # endpoint availability varies by plan/version
+            error = exc
+            if page == 0:
+                continue  # a 1-based API may reject page=0
+            break
+        batch = [it for it in _extract_items(payload)
+                 if str(pick(it, "id", default=id(it))) not in seen]
+        if not batch:
+            break
+        for item in batch:
+            seen.add(str(pick(item, "id", default=id(item))))
+            items.append(item)
+    if not items:
+        print(f"Could not list {path}: {error or 'no entries returned'}\n"
               "Open the team/repository in the Aikido platform instead — "
               "the id is in the page URL.", file=sys.stderr)
         return 1
-    items = payload if isinstance(payload, list) else next(
-        (payload[k] for k in ("data", "items", "results", "teams", "repositories")
-         if isinstance(payload.get(k), list)), [])
     for item in items:
         print(f"{str(pick(item, 'id', default='?')):>10}  "
               f"{pick(item, 'name', 'full_name', 'title')}")
